@@ -1,247 +1,146 @@
-#!/usr/bin/python3 python
-# encoding: utf-8
-'''
-@author: 孙昊
-@contact: smartadpole@163.com
-@file: convert_onnx.py
-@time: 2023/3/9 下午6:32
-@desc:
-'''
-import sys, os
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+"""
+File: convert.py
+Description: Convert DepthNet model to ONNX format.
+Author: Sun Hao
+Contact: smartadpole@163.com
+Time: 2023/3/9 18:32
+"""
 
+import sys, os
 CURRENT_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(CURRENT_DIR, '../'))
+
+import argparse
 import numpy as np
 import torch
-import os
-import argparse
-from utils.file import MkdirSimple
 from export_onnx.onnx_test import test_dir
+from utils.file import MkdirSimple
+
+# Adjust the import path according to your project structure
 from models.depth_net import DepthNet
+import time
 
-W = 640
-H = 480
-
-
-class OptAttributes:
-    def __init__(self, **entries):
-        self.__dict__.update(entries)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Export model to ONNX format")
-    parser.add_argument("--model", type=str, required=False, help="Path to the trained model.")
-    parser.add_argument("--output", type=str, required=True, help="Path to save the output image.")
-    parser.add_argument("--image", type=str, required=False, help="Path to the input image.")
-    parser.add_argument("--device", type=str, default=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-                        help="Device to run the model on.")
-    parser.add_argument("--width", type=int, default=W, help="Width of the input image.")
-    parser.add_argument("--height", type=int, default=H, help="Height of the input image.")
-    parser.add_argument("--test", action="store_true", help="test model")
-    return parser.parse_args()
-
-
-def get_config():
-    inv_K_pool = {
-        (480, 640): [[0.0017, 0.0000, -0.5, 0.0000],
-                     [0.0000, 0.0017, -0.5, 0.0000],
-                     [0.0000, 0.0000,  1.0, 0.0000],
-                     [0.0000, 0.0000,  0.0, 1.0000]],
-        (240, 320): [[0.0035, 0.0000, -0.5, 0.0000],
-                     [0.0000, 0.0035, -0.5, 0.0000],
-                     [0.0000, 0.0000,  1.0, 0.0000],
-                     [0.0000, 0.0000,  0.0, 1.0000]],
-        (120, 160): [[0.0069, 0.0000, -0.5, 0.0000],
-                     [0.0000, 0.0069, -0.5, 0.0000],
-                     [0.0000, 0.0000,  1.0, 0.0000],
-                     [0.0000, 0.0000,  0.0, 1.0000]],
-        (60, 80): [[0.0139, 0.0000, -0.556, 0.0000],
-                   [0.0000, 0.0139, -0.5, 0.0000],
-                   [0.0000, 0.0000,  1.0, 0.0000],
-                   [0.0000, 0.0000,  0.0, 1.0000]],
-        (30, 40): [[0.0278, 0.0000, -0.556, 0.0000],
-                   [0.0000, 0.0278, -0.5, 0.0000],
-                   [0.0000, 0.0000,  1.0, 0.0000],
-                   [0.0000, 0.0000,  0.0, 1.0000]],
-        (15, 20): [[0.0556, 0.0000, -0.556, 0.0000],
-                   [0.0000, 0.0556, -0.5, 0.0000],
-                   [0.0000, 0.0000,  1.0, 0.0000],
-                   [0.0000, 0.0000,  0.0, 1.0000]]
-    }
-
-    proj_mats = [
-        {
-            (480, 640): [[-239.94, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -239.94, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (240, 320): [[-119.97, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -119.97, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (120, 160): [[-5.9984e+01, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -5.9984e+01, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (60, 80): [[-2.9992e+01, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -2.9992e+01, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (30, 40): [[-14.9960, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -14.9960, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (15, 20): [[-7.4980, -18.4777, -5.1143, 123.7495],
-                       [-2.3994, -10.9992, -3.5678, 92.3475],
-                       [-1.1997, -5.9984, -1.8765, 63.8457],
-                       [0.0000, 0.0000, 0.0000, 1.0000]]
-        },
-        {
-            (480, 640): [[-239.94, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -239.94, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (240, 320): [[-119.97, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -119.97, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (120, 160): [[-5.9984e+01, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -5.9984e+01, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (60, 80): [[-2.9992e+01, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -2.9992e+01, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (30, 40): [[-14.9960, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -14.9960, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (15, 20): [[-7.4980, -18.4777, -5.1143, 123.7495],
-                       [-2.3994, -10.9992, -3.5678, 92.3475],
-                       [-1.1997, -5.9984, -1.8765, 63.8457],
-                       [0.0000, 0.0000, 0.0000, 1.0000]]
-        },
-        {
-            (480, 640): [[-239.94, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -239.94, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (240, 320): [[-119.97, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -119.97, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (120, 160): [[-5.9984e+01, 0.0000, 0.0000, 0.0000],
-                         [0.0000, -5.9984e+01, 0.0000, 0.0000],
-                         [0.0000, 0.0000, 1.0, 0.0000],
-                         [0.0000, 0.0000, 0.0, 1.0000]],
-            (60, 80): [[-2.9992e+01, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -2.9992e+01, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (30, 40): [[-14.9960, 0.0000, 0.0000, 0.0000],
-                       [0.0000, -14.9960, 0.0000, 0.0000],
-                       [0.0000, 0.0000, 1.0, 0.0000],
-                       [0.0000, 0.0000, 0.0, 1.0000]],
-            (15, 20): [[-7.4980, -18.4777, -5.1143, 123.7495],
-                       [-2.3994, -10.9992, -3.5678, 92.3475],
-                       [-1.1997, -5.9984, -1.8765, 63.8457],
-                       [0.0000, 0.0000, 0.0000, 1.0000]]
-        }
-    ]
-
-    return proj_mats, inv_K_pool
-
+DEFAULT_WIDTH = 640
+DEFAULT_HEIGHT = 480
 
 class WarpPoseModel(torch.nn.Module):
-    def __init__(self, file, width, height):
+    """
+    A wrapper model to adapt the input format for DepthNet.
+    Accepts a single image tensor of shape [B, 3, H, W] (values in [0, 255])
+    and constructs the required inputs for DepthNet (poses, image sequence, intrinsics).
+    """
+    def __init__(self, ckpt_dir, width, height):
         super(WarpPoseModel, self).__init__()
-
-        self.model = DepthNet(image_size=(width, height), backbone={'extractor': 'down_sample'},
-                              mode='avg', seq_len=2, downscale=1).cuda()
-        device = torch.device("cuda")
+        self.image_width = width
+        self.image_height = height
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model = DepthNet(
+            ckpt_dir=ckpt_dir,
+            device=device,
+            image_size=(height, width),
+            backbone={'extractor': 'down_sample'},
+            mode='avg',
+            seq_len=2,
+            downscale=1
+        )
         self.model.to(device)
         self.model.eval()
 
     def forward(self, image):
-        proj_mats, inv_K_pool = get_config()
-        inv_K_pool = {k: torch.tensor(v).unsqueeze(0).cuda() for k, v in inv_K_pool.items()}
-        proj_mats = [{k: torch.tensor(v).unsqueeze(0).cuda() for k, v in pm.items()} for pm in proj_mats]
+        batch_size = 1
+        seq_len = 2  # Must match the seq_len provided during initialization
+        device = image.device
 
-        data = {}
-        data['poses'] = proj_mats
-        data['images'] = [image, image, ]
-        data['intrinsics'] = inv_K_pool[480, 640]
+        # Create fake poses (zeros imply identity transformation)
+        poses = torch.zeros(batch_size, seq_len, 7, device=device)
+        poses[..., 3] = 1.0  # 设置四元数的实部为 1
+        # Replicate the input image seq_len times
+        images = image.unsqueeze(1).repeat(1, seq_len, 1, 1, 1)
+        # Construct intrinsics: fx = width/2, fy = height/2, cx = width/2, cy = height/2
+        fx = self.image_width / 2.0
+        fy = self.image_height / 2.0
+        cx = self.image_width / 2.0
+        cy = self.image_height / 2.0
+        intrinsics = torch.tensor([fx, fy, cx, cy], device=device).unsqueeze(0).repeat(batch_size, 1)
 
-        outputs = self.model(image, [image, image, ], proj_mats[0], proj_mats[1:], inv_K_pool)
-        depth_pred = outputs
-        return depth_pred
+        data = {
+            'poses': poses,
+            'images': images,
+            'intrinsics': intrinsics
+        }
 
+        outputs = self.model(data)
+        depth = outputs['depths'][-1]
+        return depth
 
-def export_to_onnx(model_path, onnx_file, width=W, height=H, device="cuda", version=12):
-    opt = OptAttributes(
-        multi_view_agg=1,
-        robust=False,
-        att_rate=4,
-        depth_embedding="learned",
-        nlabel=32,
-        use_skip=1,
-        input_scale=0,
-        use_unet=True,
-        unet_channel_mode="v0",
-        num_depth_regressor_anchor=512,
-        max_depth=32.0,
-        min_depth=0.5,
-        inv_depth=1,
-        num_frame=2,
-        nhead=1,
-        height=height,
-        width=width,
-        pred_conf=0,
-        output_scale=2,
-    )
-
-    model = WarpPoseModel(model_path, opt)
-
-    # Create dummy input for the model
-    dummy_np = np.random.randn(3, height, width).astype(np.float32)
-    dummy_input = torch.from_numpy(dummy_np).unsqueeze(0).float().cuda()
-    # dummy_input = torch.randn(1, 3, height, width)
-
+def export_to_onnx(model_path, onnx_file, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, device="cuda", opset_version=16):
+    """
+    Export the DepthNet model to ONNX format.
+    :param model_path: Path to the trained model weights (passed to DepthNet as ckpt_dir)
+    :param onnx_file: File path to save the ONNX model.
+    :param width: Input image width.
+    :param height: Input image height.
+    :param device: Device to run the model.
+    :param opset_version: ONNX opset version.
+    """
+    device = torch.device(device)
+    model = WarpPoseModel(model_path, width, height).to(device)
+    model.eval()
 
     for name, param in model.named_parameters():
         print(f"Parameter {name} is on device {param.device}")
         break
-    print(f"dummy_input is on device {dummy_input.device}")
-    # Export the model
-    torch.onnx.export(model, dummy_input, onnx_file,
-                      export_params=True,  # store the trained parameter weights inside the model file
-                      opset_version=version,  # the ONNX version to export the model to
-                      do_constant_folding=True)
+    dummy_input = (torch.rand(1, 3, height, width, device=device) * 255.0).float()
+    print(f"dummy_input is on device {dummy_input.device}, shape={dummy_input.shape}")
 
+    torch.onnx.export(
+        model,
+        dummy_input,
+        onnx_file,
+        export_params=True,
+        opset_version=opset_version,
+        do_constant_folding=True,
+        input_names=['input'],
+        output_names=['depth_output']
+    )
     print(f"Model exported to {onnx_file}")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Export DepthNet model to ONNX format")
+    parser.add_argument("--model", type=str, default="",
+                        help="Path to the trained model directory or weight file")
+    parser.add_argument("--output", type=str, required=True,
+                        help="Directory to save the exported ONNX model")
+    parser.add_argument("--image", type=str, required=False,
+                        help="Path to an input image for testing the model")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="Device to run the model")
+    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH,
+                        help="Input image width")
+    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT,
+                        help="Input image height")
+    parser.add_argument("--test", action="store_true",
+                        help="Test the exported ONNX model")
+    return parser.parse_args()
 
 def main():
     args = parse_args()
-    version = 16
+    opset_version = 16
 
     if args.model:
         model_name = "_".join(args.model.split("/")[-3:]).replace("ckpts", "").replace("=", "-").strip('_')
         model_name = os.path.splitext(model_name)[0].split("-val")[0]
     else:
         model_name = "model"
-    output = os.path.join(args.output, model_name, f'{args.width}_{args.height}')
-    onnx_file = os.path.join(output, f'MVS2D_{args.width}_{args.height}_{model_name}_{version}.onnx')
-    MkdirSimple(output)
+    output_dir = os.path.join(args.output, model_name, f'{args.width}_{args.height}')
+    onnx_file = os.path.join(output_dir, f'DepthNet_{args.width}_{args.height}_{model_name}_{opset_version}.onnx')
+    MkdirSimple(output_dir)
 
-    export_to_onnx(args.model, onnx_file, args.width, args.height,
-                   args.device, version=version)  # Replace 'vitl' with the desired encoder
-
-    print("export onnx to {}".format(onnx_file))
+    export_to_onnx(args.model, onnx_file, args.width, args.height, args.device, opset_version=opset_version)
     if args.test:
-        test_dir(onnx_file, [args.image, ], output)
-
+        test_dir(onnx_file, [args.image], output_dir)
 
 if __name__ == "__main__":
     main()

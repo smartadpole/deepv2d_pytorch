@@ -26,7 +26,7 @@ def se3_transform_depth(T: SE3, depths, intrinsics, min_depth=0.1, project_mask=
     if project_mask:
         mask = mask & (project_pts[..., -1] > min_depth)  # z > min_depth [b, f, h, w]
 
-    project_coors = pt2uv(project_pts, intrinsics, ~mask, min_depth)
+    project_coors = pt2uv(project_pts, intrinsics, torch.logical_not(mask), min_depth)
     return key_pts, project_pts, project_coors, mask
 
 
@@ -93,7 +93,7 @@ def se3_transform_pt(T: SE3, key_pts, intrinsics, min_depth=0.1, project_mask=Tr
         mask = mask & (project_pts[..., -1] > min_depth)  # z > min_depth [b, f, h, w]
 
     jac_pose = jac_local_pose(project_pts)
-    project_coors = pt2uv(project_pts, intrinsics, ~mask, min_depth)
+    project_coors = pt2uv(project_pts, intrinsics, torch.logical_not(mask), min_depth)
     jac_pt = jac_local_pt(project_pts, intrinsics, min_depth)
     jac = torch.einsum('...ij,...jk->...ik', jac_pt, jac_pose)
 
@@ -127,7 +127,7 @@ def induced_flow(T: SE3, depths, intrinsics, min_depth=0.1, project_mask=True, s
     if show:
         show_pt(project_pts[0, 0][mask[0, 0]].cpu().numpy())
 
-    project_coors = pt2uv(project_pts, intrinsics, ~mask, min_depth)
+    project_coors = pt2uv(project_pts, intrinsics, torch.logical_not(mask), min_depth)
     flow = project_coors - coords
     return flow, mask
 

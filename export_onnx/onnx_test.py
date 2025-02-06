@@ -209,7 +209,12 @@ def test_dir(model_file, image_dirs:list, output_dir, count=DEFAULT_MAX_COUNT):
         if  i > count:
             break
 
-        intrinsic, config_file = set_by_config_yaml(img_files[0], K_dict)
+        if no_image:
+            intrinsic = np.array([[1, 0, 0],
+                                  [0, 1, 0],
+                                  [0, 0, 1]], dtype=np.float32)
+        else:
+            intrinsic, config_file = set_by_config_yaml(img_files[0], K_dict)
         image, depth, depth_norm = test_image(img_files, model, intrinsic)
         file_name = img_files[0][root_len+1:] if not no_image else f"random_{time.time()}.jpg"
         save_image(image, depth, output_dir, file_name)
